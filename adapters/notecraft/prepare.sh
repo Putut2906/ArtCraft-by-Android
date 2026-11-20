@@ -54,6 +54,30 @@ if m:
         p.write_text(s)
 PY
 
+# Upstream keeps its own `android/` crate (package name `notecraft-android`) listed in workspace
+# members. The builder generates `apps/notecraft-android` with the same package name, so cargo
+# aborts with "two packages named `notecraft-android`". Exclude the upstream `android` dir so the
+# builder's launcher is the single `notecraft-android` package.
+python3 - "$SRC_ABS/Cargo.toml" <<'PY'
+from pathlib import Path
+import re, sys, tomllib
+p = Path(sys.argv[1])
+s = p.read_text()
+m = re.search(r'(?ms)^exclude\s*=\s*\[(.*?)\]', s)
+if m:
+    inner = m.group(1)
+    if '"android"' not in inner:
+        new_inner = inner.rstrip()
+        if not new_inner.endswith(','):
+            new_inner += ','
+        new_inner += ' "android"'
+        s = s[:m.start(1)] + new_inner + s[m.end(1):]
+else:
+    s = s.rstrip() + '\n\nexclude = ["android"]\n'
+tomllib.loads(s)
+p.write_text(s)
+PY
+
 mkdir -p "$DEST"
 cp -a "$ADAPTER/." "$DEST/"
 rm -f "$DEST/prepare.sh" "$DEST/README.md"
