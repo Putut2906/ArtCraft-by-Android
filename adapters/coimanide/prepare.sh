@@ -118,45 +118,33 @@ p.write_text(s)
 print("coiman-ide: wgpu + native Activity, library target")
 PY
 
-# A library form of the binary: the same modules and core re-exports, plus the two entry points
-# the Android shell needs (the app's own open_file/open_folder are crate-private).
-python3 - "$SRC_ABS/crates/coiman-ide/src/main.rs" "$SRC_ABS/crates/coiman-ide/src/lib.rs" <<'PY'
+# Upstream now ships its own `crates/coiman-ide/src/lib.rs` (main.rs is a thin `run_desktop`
+# wrapper that no longer holds the module list, so the old "generate lib.rs from main.rs" step
+# aborted with "main.rs no longer has the coiman_core re-export line"). Patch upstream's lib.rs
+# in place instead: the Android shell needs `app` and `ui` public (it references
+# `coiman_ide::app::CodeApp`) and the builder's `android_keyboard` module registered (the app/ui
+# code calls `crate::android_keyboard::...`; android_keyboard.rs is copied into src/ at the
+# app/ui patch step below). Upstream's own `pub use app::CodeApp`, `pub fn open_file/open_folder`
+# and the `pub(crate) use coiman_core::{...}` re-exports are kept untouched.
+python3 - "$SRC_ABS/crates/coiman-ide/src/lib.rs" <<'PY'
 from pathlib import Path
 import re, sys
 
-main = Path(sys.argv[1]).read_text()
-match = re.search(r"(?ms)^pub\(crate\) use coiman_core::\{.*?\};", main)
-if not match:
-    raise SystemExit("main.rs no longer has the coiman_core re-export line")
-reexport = match.group(0)
-
-lib = '''//! Library form of Coiman IDE, used by the Android shell in `apps/coimanide-android`.
-//!
-//! The desktop binary keeps its own `main.rs`; this exposes the very same modules so the Android
-//! launcher can draw `app::CodeApp` inside its own eframe shell and hand it files the system
-//! opened. It also re-exports the core modules under the names the app's `crate::buffer`,
-//! `crate::document`, ... paths expect, exactly as `main.rs` does.
-
-pub mod android_keyboard;
-pub mod app;
-pub mod ui;
-
-''' + reexport + '''
-
-use std::path::{Path, PathBuf};
-
-/// Opens a file the system handed the app (SAF staged a copy in app storage).
-pub fn open_file(app: &mut app::CodeApp, path: &Path) {
-    app.open_file(path);
-}
-
-/// Opens a project folder (the real path behind a SAF tree).
-pub fn open_folder(app: &mut app::CodeApp, path: PathBuf) {
-    app.open_folder(path);
-}
-'''
-Path(sys.argv[2]).write_text(lib)
-print("coiman-ide: src/lib.rs written")
+p = Path(sys.argv[1])
+if not p.is_file():
+    raise SystemExit("coiman-ide/src/lib.rs is missing; upstream no longer provides a library target")
+s = p.read_text()
+s = re.sub(r"(?m)^mod app;", "pub mod app;", s)
+s = re.sub(r"(?m)^mod ui;", "pub mod ui;", s)
+if not re.search(r"(?m)^pub mod android_keyboard;", s):
+    if re.search(r"(?m)^pub mod app;", s):
+        s = re.sub(r"(?m)^(pub mod app;)", r"\1\npub mod android_keyboard;", s, count=1)
+    else:
+        s = "pub mod android_keyboard;\n" + s
+if "pub mod app;" not in s:
+    raise SystemExit("coiman-ide/src/lib.rs no longer declares `mod app;` the way the adapter expects")
+p.write_text(s)
+print("coiman-ide: patched upstream lib.rs (pub app/ui + android_keyboard)")
 PY
 
 # --------------------------------------------------------------------------------------------------
