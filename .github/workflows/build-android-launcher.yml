@@ -92,6 +92,13 @@ jobs:
           fi
           echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
 
+      - name: Ensure jq available (for generate-catalog.sh)
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          jq --version
+
       - name: Build Android Launcher
         working-directory: ./launcher/apps/artcraft-launcher-android
         env:
