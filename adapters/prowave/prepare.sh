@@ -78,6 +78,60 @@ else:
         print("Added a workspace members list containing apps/prowave-android")
 PY
 
+# Android's libc has no POSIX shared memory (`shm_open`/`shm_unlink`), so
+# crates/prowave-plugin-host/src/sandbox.rs fails to compile for aarch64-linux-android
+# (E0425). Route those two calls through cfg-gated helpers: on Android `shm_open_compat`
+# returns -1 so `Map::open` yields None and the plug-in host falls back to in-process loading
+# (the cross-process sandbox cannot spawn a child executable on Android anyway), and
+# `shm_unlink_compat` is a no-op. The crate then builds; only the plug-in process-isolation
+# feature is unavailable on Android, which is inherent to the platform. POSIX semaphores
+# (`sem_open`/`sem_post`/...) ARE present in Android libc, so they are left untouched.
+python3 - "$SRC_ABS/crates/prowave-plugin-host/src/sandbox.rs" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+if not p.is_file():
+    raise SystemExit(0)
+s = p.read_text()
+if 'shm_open_compat' in s:
+    raise SystemExit(0)
+
+s = s.replace(
+    'libc::shm_open(name.as_ptr(), flags, 0o600 as libc::c_uint)',
+    'shm_open_compat(name.as_ptr(), flags)',
+)
+s = s.replace('libc::shm_unlink(name.as_ptr())', 'shm_unlink_compat(name.as_ptr())')
+s = s.replace('libc::shm_unlink(self.name.as_ptr())', 'shm_unlink_compat(self.name.as_ptr())')
+
+helpers = '''
+
+// ---- Android shared-memory compatibility shims (added by the ArtCraft Android builder) ----
+// Android's libc has no POSIX shared memory. `Map::open` treats a negative fd as "no shared
+// memory", so on Android the cross-process plug-in sandbox is unavailable and the host loads
+// plug-ins in-process; the unlink is a no-op because there was never a named object.
+#[cfg(not(target_os = "android"))]
+unsafe fn shm_open_compat(name: *const libc::c_char, flags: libc::c_int) -> libc::c_int {
+    libc::shm_open(name, flags, 0o600 as libc::c_uint)
+}
+#[cfg(target_os = "android")]
+unsafe fn shm_open_compat(_name: *const libc::c_char, _flags: libc::c_int) -> libc::c_int {
+    -1
+}
+#[cfg(not(target_os = "android"))]
+unsafe fn shm_unlink_compat(name: *const libc::c_char) {
+    libc::shm_unlink(name);
+}
+#[cfg(target_os = "android")]
+unsafe fn shm_unlink_compat(_name: *const libc::c_char) {}
+'''
+if 'libc::shm_open(' in s or 'libc::shm_unlink(' in s:
+    raise SystemExit("prowave sandbox.rs still references libc::shm_* directly; the patch did not apply")
+s = s + helpers
+p.write_text(s)
+print("prowave: cfg-gated shm_open/shm_unlink for Android")
+PY
+
 # Disable accesskit on eframe in crates/prowave-app for Android native-activity compatibility
 sed -i 's/^eframe = "0.37.0"/eframe = { version = "0.37.0", default-features = false, features = ["default_fonts", "wgpu"] }/' "$SRC_ABS/crates/prowave-app/Cargo.toml" || true
 # Downgrade midir to 0.10.4 to use vendored dummy backend (avoids libamidi linking error on API 28)

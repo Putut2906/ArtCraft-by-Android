@@ -260,15 +260,13 @@ if patch_crates_io in s:
     else:
         patch_section = after
         rest = ''
-    # Remove existing egui git entries
+    # Remove EVERY existing egui-family entry from [patch.crates-io], whether it points to the git
+    # fork or a local vendor path. The previous code only stripped the git form plus four named
+    # path crates, so the upstream path entries for ecolor/emath/eframe/egui_glow/
+    # epaint_default_fonts survived and collided with the ones re-added below ("Cannot overwrite a
+    # value"). winit is intentionally NOT in egui_crates, so its vendor/winit path patch is kept.
     for crate in egui_crates:
-        pattern = r'^\s*' + re.escape(crate) + r'\s*=\s*\{[^}]*git\s*=\s*"https://github.com/storytold/egui.git"[^}]*\}\s*\n?'
-        patch_section = re.sub(pattern, '', patch_section, flags=re.M)
-    # Also remove any local path entries for egui, epaint, egui-wgpu and egui-winit from patch.crates-io
-    patch_section = re.sub(r'^\s*egui\s*=\s*\{[^}]*path\s*=\s*"[^"]*"[^}]*\}\s*\n?', '', patch_section, flags=re.M)
-    patch_section = re.sub(r'^\s*epaint\s*=\s*\{[^}]*path\s*=\s*"[^"]*"[^}]*\}\s*\n?', '', patch_section, flags=re.M)
-    patch_section = re.sub(r'^\s*egui-wgpu\s*=\s*\{[^}]*path\s*=\s*"[^"]*"[^}]*\}\s*\n?', '', patch_section, flags=re.M)
-    patch_section = re.sub(r'^\s*egui-winit\s*=\s*\{[^}]*path\s*=\s*"[^"]*"[^}]*\}\s*\n?', '', patch_section, flags=re.M)
+        patch_section = re.sub(r'^\s*' + re.escape(crate) + r'\s*=\s*\{[^}]*\}\s*(?:#.*)?\n?', '', patch_section, flags=re.M)
     # Add all egui git entries (using hyphens for egui-wgpu and egui-winit as they appear in the git repo)
     # BUT egui-wgpu, egui, epaint point to local vendor (SolidCraft's custom version)
     new_entries = '''
@@ -282,7 +280,7 @@ egui_extras = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799
 egui-wgpu = { path = "vendor/egui-wgpu" }
 egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }'''
-    s = before + patch_crates_io + '\n' + patch_section.lstrip('\n') + new_entries.strip() + '\n' + rest
+    s = before + patch_crates_io + '\n' + patch_section.strip() + '\n' + new_entries.strip() + '\n' + rest
 else:
     new_entries = '''ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
