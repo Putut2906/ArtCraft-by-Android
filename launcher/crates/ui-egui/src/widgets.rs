@@ -198,56 +198,64 @@ enum WindowButton {
 
 /// Minimize, maximize (or restore) and close, `height` tall, for a right-to-left layout: close
 /// ends up at the right. On a connected Samsung DeX desktop (a mouse pointer is present) the
-/// buttons are hover-revealed: they stay hidden until the pointer moves over their reserved area
-/// at the top-right, and disappear when the pointer leaves it.
+/// buttons are hover-revealed: the group's space is always reserved so the header does not jump,
+/// but the buttons only draw and accept clicks while the pointer is over them.
 pub fn window_buttons(ui: &mut Ui, height: f32) {
     let ctx = ui.ctx().clone();
-    // Always reserve the group's footprint (close, maximize/restore, minimize: 46 px each, plus
-    // the hairline rule) so the header layout does not jump as the buttons appear and disappear.
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    let band = resize_band(&ctx);
+    // The first frame after a restore hit-tests the maximized buttons, so an edge press can land on them.
+    let inside = ctx.content_rect().shrink(band);
+    // Reserve the group's footprint (close, maximize/restore, minimize: 46 px each, plus the
+    // hairline rule) so the header layout is stable whether or not the buttons are shown.
     let group_w = 46.0 * 3.0 + 1.0;
-    let (area, _) = ui.allocate_exact_size(egui::vec2(group_w, height), Sense::hover());
+    let (area, _) = ui.allocate_exact_size(vec2(group_w, height), Sense::hover());
     // Hover-reveal: only draw and accept input while the pointer is over the reserved area.
-    let hovering = ctx
+    let show = ctx
         .input(|i| i.pointer.hover_pos())
         .is_some_and(|p| area.expand(6.0).contains(p));
-    if !hovering {
-        return;
+    if show {
+        // Hairline on the group's left edge, matching the previous `rule`.
+        ui.painter().vline(area.min.x, area.y_range(), Stroke::new(1.0, Tokens::get(&ctx).line));
     }
-    ui.put(area, |ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let ctx = ui.ctx().clone();
-            let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            // The first frame after a restore hit-tests the maximized buttons, so an edge press can land on them.
-            let inside = ctx.content_rect().shrink(resize_band(&ctx));
-            let clicked = |resp: Response| resp.clicked() && resp.interact_pointer_pos().is_none_or(|p| inside.contains(p));
-            if clicked(window_button(ui, WindowButton::Close, height)) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    let order = [
+        WindowButton::Close,
+        if maximized { WindowButton::Restore } else { WindowButton::Maximize },
+        WindowButton::Minimize,
+    ];
+    let mut x = area.max.x;
+    for button in order {
+        x -= 46.0;
+        let rect = Rect::from_min_max(egui::pos2(x, area.min.y), egui::pos2(x + 46.0, area.max.y));
+        let resp = window_button(ui, button, rect, band, show);
+        if resp.clicked() && resp.interact_pointer_pos().is_none_or(|p| inside.contains(p)) {
+            match button {
+                WindowButton::Close => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                WindowButton::Maximize | WindowButton::Restore => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized))
+                }
+                WindowButton::Minimize => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
             }
-            let size = if maximized { WindowButton::Restore } else { WindowButton::Maximize };
-            if clicked(window_button(ui, size, height)) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-            }
-            if clicked(window_button(ui, WindowButton::Minimize, height)) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            rule(ui, height);
-        });
-    });
+        }
+    }
 }
 
 /// Draws one caption button and returns its click response; the caller sends the viewport
 /// command. Hit-testing excludes the top resize band (and, for close, the right-edge band) so
 /// the window edges stay resizable; when maximized there is no band and close reaches the
 /// corner.
-fn window_button(ui: &mut Ui, button: WindowButton, height: f32) -> Response {
+fn window_button(ui: &mut Ui, button: WindowButton, rect: Rect, band: f32, show: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(46.0, height), Sense::hover());
     // Clickable below the resize band along the top (and, for close, the right edge); maximized,
     // there is no band and the close button takes the screen's corner, as Windows' own does.
-    let band = resize_band(ui.ctx());
     let right = if button == WindowButton::Close { band } else { 0.0 };
     let hit = Rect::from_min_max(rect.min + vec2(0.0, band), rect.max - vec2(right, 0.0));
-    let resp = ui.interact(hit, ui.scope_id().with(("window-button", button as u8)), Sense::click());
+    let sense = if show { Sense::click() } else { Sense::hover() };
+    let resp = ui.interact(hit, ui.id().with(("window-button", button as u8)), sense);
+    // Hover-reveal: when the pointer is away, keep the interaction slot but paint nothing.
+    if !show {
+        return resp;
+    }
     let (fill, ink) = match (button, resp.hovered()) {
         (WindowButton::Close, true) => (Color32::from_rgb(0xc4, 0x2b, 0x1c), Color32::WHITE),
         (_, true) => (t.line, t.ink_strong),
