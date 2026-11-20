@@ -6,6 +6,8 @@ name: Build Android Launcher
 on:
   push:
     branches: [main]
+    tags:
+      - 'android-v*'
     paths:
       - 'launcher/**'
       - 'launcher/Cargo.toml'
