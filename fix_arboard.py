@@ -36,18 +36,16 @@ if uses_workspace:
         s2 = re.sub(r'^\s*arboard\s*=.*$', 'arboard = { path = "vendor/arboard" }', s, flags=re.M)
     s = s2
 else:
-    # An app that declares arboard inline (not `workspace = true`). Redirect the dependency to
-    # the vendored Android stub in place, preserving any features. The previous behaviour deleted
-    # the dependency and relied on `[patch.crates-io]` alone, which left the crate unlinked and
-    # broke compilation with E0433 for apps whose clipboard code is compiled on Android (AniCraft).
-    def repl_dep(m):
-        inner = m.group(0)
-        features = re.search(r'features\s*=\s*\[([^\]]+)\]', inner)
-        if features:
-            return f'arboard = {{ path = "vendor/arboard", features = [{features.group(1)}] }}'
-        return 'arboard = { path = "vendor/arboard" }'
-    s = re.sub(r'^\s*arboard\s*=\s*\{[^}]*\}\s*(?:#.*)?$', repl_dep, s, flags=re.M)
-    s = re.sub(r'^\s*arboard\s*=\s*"[^"]*"\s*(?:#.*)?$', repl_dep, s, flags=re.M)
+    # Keep every `arboard` dependency declaration (the root package OR a sub-crate may require it)
+    # and redirect the crates.io copy to the vendored Android stub globally via [patch.crates-io].
+    # Deleting the dependency (the old behaviour) broke apps whose root package uses arboard on
+    # Android (AniCraft -> E0433 unlinked crate); dropping this patch (a bad intermediate fix)
+    # broke apps that require arboard from a sub-crate (PdfCraft, DiagramCraft -> crates.io
+    # arboard has no Android backend). The patch applies to both, so keep the requests AND add it.
+    header = "[patch.crates-io]"
+    if entry_path not in s:
+        s = (s.replace(header, header + "\n" + entry_path, 1) if header in s
+             else s.rstrip() + "\n\n" + header + "\n" + entry_path + "\n")
 
 try:
     tomllib.loads(s)
