@@ -217,6 +217,10 @@ pub fn create_app(cc: &eframe::CreationContext<'_>) -> App {
     let measuring = true;
     let shot_exit: std::sync::Arc<std::sync::atomic::AtomicI32> = Default::default();
     let midi_out = None;
+    // Upstream's App literal reads `audio_prefs: prefs`; `prefs` is a `main()` local that the
+    // copied literal still names, so provide it here too (load() falls back to defaults when
+    // there is no saved audio.txt, which is the case on a fresh Android install).
+    let prefs = audio_prefs::AudioPrefs::load();
     App {""" + literal + """}
 }
 """
